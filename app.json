@@ -7,37 +7,25 @@
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
     "backgroundColor": "#09090b",
+
     "splash": {
       "image": "./assets/splash.png",
       "resizeMode": "contain",
       "backgroundColor": "#09090b"
     },
-    "assetBundlePatterns": [
-      "**/*"
-    ],
-    "ios": {
-      "supportsTablet": true,
-      "bundleIdentifier": "com.yourname.incubator",
-      "infoPlist": {
-        "UIBackgroundModes": [
-          "audio",
-          "remote-notification"
-        ]
-      }
-    },
+
+    "assetBundlePatterns": ["**/*"],
+
     "android": {
+      "package": "com.agash.incubator",
+      "versionCode": 2,
+      "permissions": ["INTERNET", "VIBRATE", "WAKE_LOCK"],
       "adaptiveIcon": {
         "foregroundImage": "./assets/icon.png",
         "backgroundColor": "#09090b"
-      },
-      "package": "com.Agash.incubator",
-      "permissions": [
-        "NOTIFICATIONS",
-        "VIBRATE",
-        "WAKE_LOCK",
-        "FOREGROUND_SERVICE"
-      ]
+      }
     },
+
     "plugins": [
       [
         "expo-notifications",
@@ -48,7 +36,13 @@
       ],
       "expo-av"
     ],
+
     "extra": {
-    }
+      "eas": {
+        "projectId": "eaff9dde-2982-49a6-942a-93a387da5cbd"
+      }
+    },
+
+    "owner": "tndeals"
   }
 }
