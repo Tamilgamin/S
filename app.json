@@ -49,9 +49,6 @@
       "expo-av"
     ],
     "extra": {
-      "eas": {
-        "projectId": "your-project-id"
-      }
     }
   }
 }
