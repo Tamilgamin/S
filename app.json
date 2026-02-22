@@ -30,7 +30,7 @@
         "foregroundImage": "./assets/icon.png",
         "backgroundColor": "#09090b"
       },
-      "package": "com.yourname.incubator",
+      "package": "com.Agash.incubator",
       "permissions": [
         "NOTIFICATIONS",
         "VIBRATE",
