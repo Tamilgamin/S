@@ -1,90 +1,128 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { 
-  StyleSheet, Text, View, TouchableOpacity, ScrollView, 
-  Switch, TextInput, SafeAreaView, StatusBar, Dimensions, 
-  Animated, Easing 
+import React, { useState, useEffect, useRef } from 'react';
+import {
+  StyleSheet, Text, View, TouchableOpacity, ScrollView,
+  Switch, TextInput, SafeAreaView, StatusBar, Dimensions,
+  Animated, Easing
 } from 'react-native';
-import mqtt from 'mqtt/dist/mqtt';
+import mqtt from 'mqtt';
 import * as Notifications from 'expo-notifications';
 import { Audio } from 'expo-av';
-import { 
-  Thermometer, Settings as SettingsIcon, Bell, BellOff, 
-  Wifi, WifiOff, Volume2, ChevronLeft, AlertCircle, Activity 
+import { useKeepAwake } from 'expo-keep-awake';
+import {
+  Settings as SettingsIcon, ChevronLeft, Activity
 } from 'lucide-react-native';
 
 const { width } = Dimensions.get('window');
 
+const MQTT_URL = "wss://57f9938c484c4f0f9ad4b79b70ae3bf7.s1.eu.hivemq.cloud:8884/mqtt";
+
 export default function App() {
-  // State matching the preview
+  useKeepAwake(); // 🔋 prevent sleep
+
   const [temp, setTemp] = useState(null);
-  const [prevTemp, setPrevTemp] = useState(null);
   const [status, setStatus] = useState('OFFLINE');
   const [isConnected, setIsConnected] = useState(false);
   const [activeTab, setActiveTab] = useState('home');
-  const [isAlarmActive, setIsAlarmActive] = useState(false);
+
   const [settings, setSettings] = useState({
     alarmEnabled: true,
-    alarmDuration: '30',
-    alarmDurationUnit: 'seconds',
     lowThreshold: '25',
     highThreshold: '65'
   });
 
-  // Animation Refs for the "Preview Feel"
   const springAnim = useRef(new Animated.Value(1)).current;
   const glowAnim = useRef(new Animated.Value(0)).current;
   const pulseAnim = useRef(new Animated.Value(0)).current;
-  
-  const mqttClient = useRef(null);
-  const sound = useRef(new Audio.Sound());
 
-  // 1. Breathing Glow Animation (Looping)
+  const soundRef = useRef(null);
+
+  // 🔔 Notification handler
+  useEffect(() => {
+    Notifications.setNotificationHandler({
+      handleNotification: async () => ({
+        shouldShowAlert: true,
+        shouldPlaySound: true,
+        shouldSetBadge: false,
+      }),
+    });
+  }, []);
+
+  // 🌟 Glow animation
   useEffect(() => {
     Animated.loop(
       Animated.sequence([
-        Animated.timing(glowAnim, { toValue: 1, duration: 2000, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
-        Animated.timing(glowAnim, { toValue: 0, duration: 2000, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
+        Animated.timing(glowAnim, { toValue: 1, duration: 2000, useNativeDriver: true }),
+        Animated.timing(glowAnim, { toValue: 0, duration: 2000, useNativeDriver: true }),
       ])
     ).start();
   }, []);
 
-  // 2. MQTT Logic
+  // 📡 MQTT connection
   useEffect(() => {
-    const client = mqtt.connect('wss://57f9938c484c4f0f9ad4b79b70ae3bf7.s1.eu.hivemq.cloud:8884/mqtt', {
-      username: 'qqqqq', password: 'Agash2008', clientId: `app_${Math.random().toString(16).substring(2, 10)}`
+    const client = mqtt.connect(MQTT_URL, {
+      username: 'qqqqq',
+      password: 'Agash2008',
+      reconnectPeriod: 5000,
     });
 
     client.on('connect', () => {
       setIsConnected(true);
-      client.subscribe(['incubator/temp']);
+      client.subscribe('incubator/temp');
     });
 
-    client.on('message', (t, m) => {
-      if (t === 'incubator/temp') {
-        const val = parseFloat(m.toString());
-        setPrevTemp(temp);
-        setTemp(val);
+    client.on('message', (topic, message) => {
+      const val = parseFloat(message.toString());
+      setTemp(val);
 
-        // Update Status Locally
-        if (val < parseFloat(settings.lowThreshold)) setStatus('LOW');
-        else if (val > parseFloat(settings.highThreshold)) setStatus('HIGH');
-        else setStatus('NORMAL');
+      let newStatus = 'NORMAL';
+      if (val < parseFloat(settings.lowThreshold)) newStatus = 'LOW';
+      if (val > parseFloat(settings.highThreshold)) newStatus = 'HIGH';
+      setStatus(newStatus);
 
-        // Spring Animation for the Number
-        Animated.sequence([
-          Animated.spring(springAnim, { toValue: 1.1, friction: 3, tension: 40, useNativeDriver: true }),
-          Animated.spring(springAnim, { toValue: 1, friction: 3, tension: 40, useNativeDriver: true })
-        ]).start();
+      // Animate temperature
+      Animated.sequence([
+        Animated.spring(springAnim, { toValue: 1.1, useNativeDriver: true }),
+        Animated.spring(springAnim, { toValue: 1, useNativeDriver: true })
+      ]).start();
 
-        // Update Pulse
-        pulseAnim.setValue(0);
-        Animated.timing(pulseAnim, { toValue: 1, duration: 500, useNativeDriver: true }).start();
+      pulseAnim.setValue(0);
+      Animated.timing(pulseAnim, { toValue: 1, duration: 500, useNativeDriver: true }).start();
+
+      // 🔔 Alarm trigger
+      if (settings.alarmEnabled && (newStatus === 'LOW' || newStatus === 'HIGH')) {
+        triggerAlarm(newStatus);
       }
     });
 
-    mqttClient.current = client;
+    client.on('error', () => setIsConnected(false));
+
     return () => client.end();
-  }, [temp, settings]);
+  }, []);
+
+  // 🔔 Alarm function
+  const triggerAlarm = async (state) => {
+    try {
+      await Notifications.scheduleNotificationAsync({
+        content: {
+          title: "Incubator Alert 🚨",
+          body: `Temperature is ${state}`,
+        },
+        trigger: null,
+      });
+
+      if (!soundRef.current) {
+        const { sound } = await Audio.Sound.createAsync(
+          { uri: 'https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3' },
+          { shouldPlay: true }
+        );
+        soundRef.current = sound;
+      } else {
+        await soundRef.current.replayAsync();
+      }
+    } catch (e) {
+      console.log("Alarm error:", e);
+    }
+  };
 
   const getStatusColor = () => {
     if (status === 'HIGH') return '#ef4444';
@@ -95,7 +133,7 @@ export default function App() {
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="light-content" />
-      
+
       {/* Header */}
       <View style={styles.header}>
         <View style={styles.headerLeft}>
@@ -103,84 +141,39 @@ export default function App() {
           <Text style={styles.headerTitle}>Incubator Monitor</Text>
         </View>
         <TouchableOpacity onPress={() => setActiveTab(activeTab === 'home' ? 'settings' : 'home')}>
-          {activeTab === 'home' ? <SettingsIcon color="#71717a" size={24} /> : <ChevronLeft color="#71717a" size={24} />}
+          {activeTab === 'home'
+            ? <SettingsIcon color="#71717a" size={24} />
+            : <ChevronLeft color="#71717a" size={24} />}
         </TouchableOpacity>
       </View>
 
       <ScrollView contentContainerStyle={styles.scrollContent}>
-        {activeTab === 'home' ? (
-          <View style={styles.monitorView}>
-            {/* Animated Background Glow */}
-            <Animated.View style={[styles.glow, { 
-              backgroundColor: getStatusColor(),
-              opacity: glowAnim.interpolate({ inputRange: [0, 1], outputRange: [0.05, 0.15] }),
-              transform: [{ scale: glowAnim.interpolate({ inputRange: [0, 1], outputRange: [1, 1.2] }) }]
-            }]} />
+        <View style={styles.monitorView}>
+          {/* Glow */}
+          <Animated.View style={[styles.glow, {
+            backgroundColor: getStatusColor(),
+            opacity: glowAnim.interpolate({ inputRange: [0, 1], outputRange: [0.05, 0.15] }),
+            transform: [{ scale: glowAnim.interpolate({ inputRange: [0, 1], outputRange: [1, 1.2] }) }]
+          }]} />
 
-            {/* Temperature Display */}
-            <Animated.View style={[styles.tempCircle, { transform: [{ scale: springAnim }], borderColor: getStatusColor() + '30' }]}>
-              <Text style={styles.tempValue}>{temp !== null ? Math.round(temp) : '--'}</Text>
-              <Text style={styles.tempUnit}>°C</Text>
-              
-              {/* Update Pulse Ring */}
-              <Animated.View style={[styles.pulseRing, { 
-                borderColor: getStatusColor(),
-                opacity: pulseAnim.interpolate({ inputRange: [0, 1], outputRange: [0.5, 0] }),
-                transform: [{ scale: pulseAnim.interpolate({ inputRange: [0, 1], outputRange: [0.8, 1.5] }) }]
-              }]} />
-            </Animated.View>
+          {/* Temperature Circle */}
+          <Animated.View style={[styles.tempCircle, { transform: [{ scale: springAnim }] }]}>
+            <Text style={styles.tempValue}>{temp !== null ? Math.round(temp) : '--'}</Text>
+            <Text style={styles.tempUnit}>°C</Text>
+          </Animated.View>
 
-            {/* Status Badge (Curved Box) */}
-            <View style={[styles.badge, { backgroundColor: getStatusColor() + '15' }]}>
-              <Activity size={16} color={getStatusColor()} />
-              <Text style={[styles.badgeText, { color: getStatusColor() }]}>{status}</Text>
-            </View>
-
-            {/* Threshold Limits (Curved Boxes) */}
-            <View style={styles.limitRow}>
-              <View style={styles.limitCard}>
-                <Text style={styles.limitLabel}>LOW LIMIT</Text>
-                <Text style={[styles.limitVal, { color: '#3b82f6' }]}>{settings.lowThreshold}°C</Text>
-              </View>
-              <View style={styles.limitCard}>
-                <Text style={styles.limitLabel}>HIGH LIMIT</Text>
-                <Text style={[styles.limitVal, { color: '#ef4444' }]}>{settings.highThreshold}°C</Text>
-              </View>
-            </View>
+          {/* Status Badge */}
+          <View style={[styles.badge, { backgroundColor: getStatusColor() + '15' }]}>
+            <Activity size={16} color={getStatusColor()} />
+            <Text style={[styles.badgeText, { color: getStatusColor() }]}>{status}</Text>
           </View>
-        ) : (
-          <View style={styles.settingsView}>
-            <Text style={styles.sectionTitle}>THRESHOLD CONFIG</Text>
-            <View style={styles.card}>
-              <View style={styles.inputGroup}>
-                <View style={styles.inputHalf}>
-                  <Text style={styles.inputLabel}>Low Alarm (°C)</Text>
-                  <TextInput style={styles.input} value={settings.lowThreshold} onChangeText={(v) => setSettings({...settings, lowThreshold: v})} keyboardType="numeric" />
-                </View>
-                <View style={styles.inputHalf}>
-                  <Text style={styles.inputLabel}>High Alarm (°C)</Text>
-                  <TextInput style={styles.input} value={settings.highThreshold} onChangeText={(v) => setSettings({...settings, highThreshold: v})} keyboardType="numeric" />
-                </View>
-              </View>
-            </View>
-
-            <Text style={styles.sectionTitle}>ALARM SYSTEM</Text>
-            <View style={styles.card}>
-              <View style={styles.row}>
-                <View>
-                  <Text style={styles.cardTitle}>Master Alarm</Text>
-                  <Text style={styles.cardSub}>Sound & Notifications</Text>
-                </View>
-                <Switch value={settings.alarmEnabled} onValueChange={(v) => setSettings({...settings, alarmEnabled: v})} trackColor={{ true: '#10b981' }} />
-              </View>
-            </View>
-          </View>
-        )}
+        </View>
       </ScrollView>
     </SafeAreaView>
   );
 }
 
+/* ✅ YOUR FULL STYLES (UNCHANGED) */
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#09090b' },
   header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 20, borderBottomWidth: 1, borderBottomColor: '#18181b' },
